@@ -108,6 +108,14 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 This is a Lean 4 port of [Granite](https://github.com/mchav/granite) by Michael Chavinda. The original Haskell implementation provided the inspiration and algorithms for this library.
 
+### Original Granite Library
+- **Repository**: https://github.com/mchav/granite
+- **Author**: Michael Chavinda (@mchav)
+- **Language**: Haskell
+- **License**: BSD-3-Clause
+
+Limestone aims to bring the simplicity and elegance of Granite's terminal plotting to the Lean 4 ecosystem while adding compile-time safety guarantees through Lean's type system.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
