@@ -45,7 +45,7 @@ def examples : IO Unit := do
   -- Custom plot size
   IO.println "\n=== Custom Size Plot ==="
   let customCfg := plotConfig 40 15
-  let chart8 ← scatterList "Compact" [("Data", [(1, 2), (2, 3), (3, 4)])] customCfg
+  let chart8 ← scatterList "Compact" [("Data", [(1, 2), (2, 3), (3, 4)])] customCfg.toRaw
   IO.println chart8
 
 /-- Main entry point for examples -/

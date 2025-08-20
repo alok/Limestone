@@ -12,19 +12,19 @@ def main : IO Unit := do
     (1.0, 3.0), (2.0, 2.5), (3.0, 4.0), (4.0, 3.5), (5.0, 5.0)
   ]
   
-  let plot ← scatterList "Sample Scatter Plot" [data1, data2] defPlot
+  let plot ← scatterList "Sample Scatter Plot" [data1, data2] defPlot.toRaw
   IO.println plot
   
   IO.println "\n--- Histogram ---\n"
   
-  -- Test histogram with ValidBins
+  -- Test histogram with Bins
   let histData := [1.2, 1.5, 1.8, 2.1, 2.3, 2.5, 2.8, 3.0, 3.2, 3.5, 3.8, 4.0, 4.2, 4.5, 4.8, 5.0]
-  let validBins : ValidBins := 
+  let validBins : Bins := 
     { nBins := ⟨5, by decide⟩
     , lo := 1.0
     , hi := 5.5 }
   let histArray := NonEmptyArray.ofList 1.2 histData.tail!
-  let hist ← histogram "Sample Histogram" validBins histArray defPlot
+  let hist ← histogram "Sample Histogram" validBins histArray defPlot.toRaw
   IO.println hist
   
   IO.println "\n--- Bar Chart ---\n"
@@ -32,7 +32,7 @@ def main : IO Unit := do
   -- Test bar chart
   let barData := NonEmptyArray.ofList ("Product A", 45.2) 
     [("Product B", 38.7), ("Product C", 52.1), ("Product D", 29.8)]
-  let barChart ← bars "Sales by Product" barData defPlot
+  let barChart ← bars "Sales by Product" barData defPlot.toRaw
   IO.println barChart
   
   IO.println "\n--- Line Graph ---\n"
@@ -41,7 +41,7 @@ def main : IO Unit := do
   let lineData1pts := NonEmptyArray.ofList (1.0, 2.0) [(2.0, 3.5), (3.0, 3.2), (4.0, 4.8), (5.0, 4.5)]
   let lineData2pts := NonEmptyArray.ofList (1.0, 1.5) [(2.0, 2.8), (3.0, 3.9), (4.0, 3.5), (5.0, 5.2)]
   let lineData := NonEmptyArray.ofList ("Trend 1", lineData1pts) [("Trend 2", lineData2pts)]
-  let lineChart ← lineGraph "Trends Over Time" lineData defPlot
+  let lineChart ← lineGraph "Trends Over Time" lineData defPlot.toRaw
   IO.println lineChart
   
   IO.println "\n--- Pie Chart ---\n"
@@ -49,7 +49,7 @@ def main : IO Unit := do
   -- Test pie chart
   let pieData := NonEmptyArray.ofList ("Category A", 30.0) 
     [("Category B", 25.0), ("Category C", 20.0), ("Category D", 15.0), ("Category E", 10.0)]
-  let pieChart ← pie "Market Share" pieData defPlot
+  let pieChart ← pie "Market Share" pieData defPlot.toRaw
   IO.println pieChart
   
   IO.println "\n--- Box Plot ---\n"
@@ -59,7 +59,7 @@ def main : IO Unit := do
   let boxData2 := NonEmptyArray.ofList 2.0 [2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0]
   let boxData3 := NonEmptyArray.ofList 1.8 [2.2, 2.8, 3.2, 3.8, 4.2, 4.5, 4.8, 5.2]
   let boxData := NonEmptyArray.ofList ("Q1", boxData1) [("Q2", boxData2), ("Q3", boxData3)]
-  let boxChart ← boxPlot "Quarterly Performance" boxData defPlot
+  let boxChart ← boxPlot "Quarterly Performance" boxData defPlot.toRaw
   IO.println boxChart
   
   IO.println "\n--- Heatmap ---\n"
@@ -70,7 +70,7 @@ def main : IO Unit := do
   let row3 := NonEmptyArray.ofList 3.0 [6.0, 9.0, 12.0, 15.0]
   let row4 := NonEmptyArray.ofList 4.0 [8.0, 12.0, 16.0, 20.0]
   let heatmapData := NonEmptyArray.ofList row1 [row2, row3, row4]
-  let heatmapChart ← heatmap "Data Intensity" heatmapData defPlot
+  let heatmapChart ← heatmap "Data Intensity" heatmapData defPlot.toRaw
   IO.println heatmapChart
   
   IO.println "\n--- Stacked Bars ---\n"
@@ -80,5 +80,5 @@ def main : IO Unit := do
   let prodB := NonEmptyArray.ofList ("Q1", 8.0) [("Q2", 10.0), ("Q3", 11.0), ("Q4", 14.0)]
   let prodC := NonEmptyArray.ofList ("Q1", 12.0) [("Q2", 14.0), ("Q3", 16.0), ("Q4", 20.0)]
   let stackedData := NonEmptyArray.ofList ("Product A", prodA) [("Product B", prodB), ("Product C", prodC)]
-  let stackedChart ← stackedBars "Quarterly Sales by Product" stackedData defPlot
+  let stackedChart ← stackedBars "Quarterly Sales by Product" stackedData defPlot.toRaw
   IO.println stackedChart
