@@ -36,7 +36,7 @@ inductive Color where
   | default | black | red | green | yellow | blue | magenta | cyan | white
   | brightBlack | brightRed | brightGreen | brightYellow | brightBlue
   | brightMagenta | brightCyan | brightWhite
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 /-- Convert color to ANSI code -/
 def Color.ansiCode : Color → Nat
@@ -542,6 +542,236 @@ def lineGraph (title : String) (sers : List (String × List (Float × Float))) (
   let ax := axisify cfg cDone xmin xmax ymin ymax
   let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
     (withSty.map fun ((n, _), col) => (n, .solid, col))
+  let titled := if title.isEmpty then "" else title
+  
+  pure <| drawFrame cfg titled ax legend
+
+/-- Angle normalization helper -/
+def angleWithin (ang a0 a1 : Float) : Bool :=
+  if a1 >= a0 then ang >= a0 && ang <= a1
+  else ang >= a0 || ang <= a1
+
+/-- Pie chart -/
+def pie (title : String) (parts : List (String × Float)) (cfg : Plot) : IO String := do
+  let total := parts.map (·.2.abs) |>.foldl (· + ·) 1e-12
+  let normalized := parts.map fun (n, v) => (n, (v.abs / total))
+  
+  let wC := cfg.widthChars
+  let hC := cfg.heightChars
+  let plotC := Canvas.new wC hC
+  let wDots := wC * 2
+  let hDots := hC * 4
+  let r := min (wDots / 2 - 2) (hDots / 2 - 2)
+  let cx := wDots / 2
+  let cy := hDots / 2
+  
+  let pi := 3.141592653589793
+  let toAng (p : Float) : Float := p * 2 * pi
+  let wedges := (normalized.map (·.2) |>.map toAng).foldl (fun acc x => acc ++ [acc.getLast! + x]) [0]
+  let angles := List.zip wedges wedges.tail!
+  let names := normalized.map (·.1)
+  let cols := List.cycleN pieColors names.length
+  let withP := List.zip3 names angles cols
+  
+  let cDone := withP.foldl (fun c (_, (a0, a1), col) =>
+    c.fillDots 0 0 (wDots - 1) (hDots - 1) (fun x y =>
+      let dx := (x : Int) - cx
+      let dy := cy - (y : Int)
+      let rr2 := dx * dx + dy * dy
+      let r2 := r * r
+      let ang := Float.atan2 (Float.ofInt dy) (Float.ofInt dx)
+      let ang' := if ang < 0 then ang + 2 * pi else ang
+      rr2 <= r2 && angleWithin ang' a0 a1
+    ) (some col)
+  ) plotC
+  
+  let ax := axisify cfg cDone 0 1 0 1
+  let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
+    (withP.map fun (n, _, col) => (n, .solid, col))
+  let titled := if title.isEmpty then "" else title
+  
+  pure <| drawFrame cfg titled ax legend
+
+/-- Box plot helpers -/
+def quartiles (xs : List Float) : (Float × Float × Float × Float × Float) :=
+  let sorted := xs.toArray.qsort (· < ·) |>.toList
+  let n := sorted.length
+  if n < 5 then
+    let m := xs.foldl (· + ·) 0 / n.toFloat
+    (m, m, m, m, m)
+  else
+    let q1Idx := n / 4
+    let q2Idx := n / 2
+    let q3Idx := (3 * n) / 4
+    let getIdx (i : Nat) := sorted[i]?.getD (sorted.getLast!)
+    (sorted.head!, getIdx q1Idx, getIdx q2Idx, getIdx q3Idx, sorted.getLast!)
+
+/-- Draw vertical line in grid -/
+def drawVLine (grid : List (List (Char × Option Color))) (x y1 y2 : Nat) (ch : Char) (col : Option Color) : List (List (Char × Option Color)) :=
+  let yStart := min y1 y2
+  let yEnd := max y1 y2
+  List.range grid.length |>.map fun y =>
+    if y >= yStart && y <= yEnd then
+      grid[y]!.set x (ch, col)
+    else
+      grid[y]!
+
+/-- Draw horizontal line in grid -/
+def drawHLine (grid : List (List (Char × Option Color))) (x1 x2 y : Nat) (ch : Char) (col : Option Color) : List (List (Char × Option Color)) :=
+  if y >= grid.length then grid
+  else
+    let xStart := min x1 x2
+    let xEnd := max x1 x2
+    grid.set y <| List.range (grid[y]!.length) |>.map fun x =>
+      if x >= xStart && x <= xEnd then (ch, col)
+      else grid[y]![x]!
+
+/-- Box plot -/
+def boxPlot (title : String) (datasets : List (String × List Float)) (cfg : Plot) : IO String := do
+  let wC := cfg.widthChars
+  let hC := cfg.heightChars
+  
+  let stats := datasets.map fun (name, vals) => (name, quartiles vals)
+  
+  let allVals := datasets.flatMap (·.2)
+  let ymin := if allVals.isEmpty then 0 else 
+    (allVals.foldl min allVals.head!) - (allVals.foldl max allVals.head!).abs * 0.1
+  let ymax := if allVals.isEmpty then 1 else
+    (allVals.foldl max allVals.head!) + (allVals.foldl max allVals.head!).abs * 0.1
+  
+  let nBoxes := datasets.length
+  let boxWidth := if nBoxes == 0 then 1 else max 1 (wC / (nBoxes * 2))
+  let spacing := if nBoxes <= 1 then 0 else (wC - boxWidth * nBoxes) / (nBoxes - 1)
+  
+  let scaleY (v : Float) : Nat :=
+    clamp 0 (hC - 1) (((ymax - v) / (ymax - ymin + eps) * (hC - 1).toFloat).toUInt32.toNat)
+  
+  let emptyGrid := List.replicate hC (List.replicate wC (' ', none))
+  
+  let finalGrid := (List.zip stats (List.range stats.length)).foldl (fun grid ((_, (minV, q1, median, q3, maxV)), idx) =>
+    let xStart := idx * (boxWidth + spacing)
+    let xMid := xStart + boxWidth / 2
+    let xEnd := xStart + boxWidth - 1
+    
+    let minRow := scaleY minV
+    let q1Row := scaleY q1
+    let medRow := scaleY median
+    let q3Row := scaleY q3
+    let maxRow := scaleY maxV
+    
+    let col := pieColors[idx % pieColors.length]?.getD Color.red
+    
+    let g1 := drawVLine grid xMid minRow q1Row '│' (some col)
+    let g2 := drawVLine g1 xMid q3Row maxRow '│' (some col)
+    let g3 := drawHLine g2 xStart xEnd q1Row '─' (some col)
+    let g4 := drawHLine g3 xStart xEnd q3Row '─' (some col)
+    let g5 := drawVLine g4 xStart q1Row q3Row '│' (some col)
+    let g6 := drawVLine g5 xEnd q1Row q3Row '│' (some col)
+    drawHLine g6 xStart xEnd medRow '═' (some col)
+  ) emptyGrid
+  
+  let ax := axisifyGrid cfg finalGrid 0 nBoxes.toFloat ymin ymax
+  let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
+    ((List.zip stats (List.range stats.length)).map fun ((name, _), i) => 
+      (name, .solid, pieColors[i % pieColors.length]?.getD Color.red))
+  let titled := if title.isEmpty then "" else title
+  
+  pure <| drawFrame cfg titled ax legend
+
+/-- Heatmap -/
+def heatmap (title : String) (matrix : List (List Float)) (cfg : Plot) : IO String := do
+  let rows := matrix.length
+  let cols := if matrix.isEmpty then 0 else matrix.head!.length
+  
+  let allVals := matrix.flatMap id
+  let vmin := if allVals.isEmpty then 0 else allVals.foldl min allVals.head!
+  let vmax := if allVals.isEmpty then 1 else allVals.foldl max allVals.head!
+  let vrange := vmax - vmin + eps
+  
+  let intensityColors := [
+    Color.blue, .cyan, .brightCyan, .green, .brightGreen,
+    .yellow, .brightYellow, .red, .brightRed, .magenta, .brightMagenta
+  ]
+  
+  let colorForValue (v : Float) : Color :=
+    let norm := clamp 0 1 ((v - vmin) / vrange)
+    let idx := clamp 0 (intensityColors.length - 1) 
+      ((norm * (intensityColors.length - 1).toFloat).floor.toUInt32.toNat)
+    intensityColors[idx]?.getD Color.blue
+  
+  let wC := cfg.widthChars
+  let hC := cfg.heightChars
+  
+  -- Resample matrix to fit display
+  let resampleMatrix := List.range hC |>.map fun i =>
+    List.range wC |>.map fun j =>
+      let ri := i.toFloat * (rows - 1).toFloat / (hC - 1).toFloat
+      let ci := j.toFloat * (cols - 1).toFloat / (wC - 1).toFloat
+      let r0 := clamp 0 (rows - 1) ri.floor.toUInt32.toNat
+      let c0 := clamp 0 (cols - 1) ci.floor.toUInt32.toNat
+      -- Simple nearest neighbor for now
+      matrix[r0]![c0]!
+  
+  let grid := resampleMatrix.map fun row =>
+    row.map fun val => ('█', some (colorForValue val))
+  
+  let ax := axisifyGrid cfg grid 0 cols.toFloat rows.toFloat 0
+  
+  let gradientLegend := "Min " ++ String.join (intensityColors.take 9 |>.map fun col =>
+    paint col '█'
+  ) ++ " Max"
+  
+  let titled := if title.isEmpty then "" else title
+  
+  pure <| drawFrame cfg titled ax gradientLegend
+
+/-- Stacked bars -/
+def stackedBars (title : String) (categories : List (String × List (String × Float))) (cfg : Plot) : IO String := do
+  let wC := cfg.widthChars
+  let hC := cfg.heightChars
+  
+  let seriesNames := if categories.isEmpty || categories.head!.2.isEmpty then []
+    else categories.head!.2.map (·.1)
+  
+  let totals := categories.map fun (_, series) =>
+    series.map (·.2.abs) |>.foldl (· + ·) 0
+  let maxHeight := totals.foldl max 1e-12
+  
+  let nCats := categories.length
+  let (base, extra) := if nCats == 0 then (0, 0)
+    else (wC / nCats, wC % nCats)
+  let widths := List.range nCats |>.map fun i =>
+    base + if i < extra then 1 else 0
+  
+  let cols := List.cycleN paletteColors seriesNames.length
+  let seriesColors := List.zip seriesNames cols
+  
+  let makeBar (cat : String × List (String × Float)) (width : Nat) : List (List (Char × Option Color)) :=
+    let series := cat.2
+    let values := series.map (·.2.abs / maxHeight)
+    let cumHeights := values.foldl (fun acc x => acc ++ [(acc.getLast?.getD 0) + x]) [0]
+    let segments := List.zip3 (series.map (·.1)) cumHeights cumHeights.tail!
+    
+    List.replicate width <| List.range hC |>.map fun y =>
+      let heightFromBottom := (hC - y).toFloat / hC.toFloat
+      segments.find? (fun (_, bottom, top) => 
+        heightFromBottom > bottom && heightFromBottom <= top
+      ) |>.map (fun (name, _, _) =>
+        ('█', seriesColors.find? (·.1 == name) |>.map (·.2))
+      ) |>.getD (' ', none)
+  
+  let gutterCol := List.replicate hC (' ', none)
+  let allBars := List.zip categories widths |>.map (fun (cat, w) => makeBar cat w)
+  let columns := allBars.flatMap fun bar =>
+    bar ++ [gutterCol]
+  let columns' := if columns.isEmpty then columns else columns.dropLast
+  
+  let grid := List.range hC |>.map fun y =>
+    columns'.map fun col => col[y]!
+  
+  let ax := axisifyGrid cfg grid 0 (max 1 nCats).toFloat 0 maxHeight
+  let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
+    (seriesColors.map fun (name, col) => (name, .solid, col))
   let titled := if title.isEmpty then "" else title
   
   pure <| drawFrame cfg titled ax legend
