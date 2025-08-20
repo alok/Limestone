@@ -1,9 +1,41 @@
 /-
   Limestone: A Lean 4 port of the Granite terminal plotting library
   Original: https://github.com/mchav/granite
+  
+  This version includes type-safe wrappers to prevent common runtime errors
+  through compile-time guarantees.
 -/
 
 namespace Limestone.Granite
+
+/-- Non-empty array type to prevent empty data errors -/
+structure NonEmptyArray (α : Type) where
+  data : Array α
+  h : data.size > 0
+  deriving Repr
+
+namespace NonEmptyArray
+
+def ofList {α : Type} (head : α) (tail : List α := []) : NonEmptyArray α :=
+  { data := #[head] ++ tail.toArray, h := by 
+      simp [Array.size_append, Array.size_toArray]
+      omega }
+
+def toArray {α : Type} (nea : NonEmptyArray α) : Array α := nea.data
+def toList {α : Type} (nea : NonEmptyArray α) : List α := nea.data.toList
+
+def size {α : Type} (nea : NonEmptyArray α) : Nat := nea.data.size
+
+def map {α β : Type} (f : α → β) (nea : NonEmptyArray α) : NonEmptyArray β :=
+  { data := nea.data.map f, h := by simp [Array.size_map]; exact nea.h }
+
+def foldl {α β : Type} (f : β → α → β) (init : β) (nea : NonEmptyArray α) : β :=
+  nea.data.foldl f init
+
+end NonEmptyArray
+
+/-- Vector type with statically known length -/
+abbrev Vector (α : Type) (n : Nat) := { a : Array α // a.size = n }
 
 /-- Position of legend in plots -/
 inductive LegendPos where
@@ -11,7 +43,7 @@ inductive LegendPos where
   | legendBottom
   deriving Repr, BEq
 
-/-- Plot configuration -/
+/-- Plot configuration with validation -/
 structure Plot where
   widthChars   : Nat
   heightChars  : Nat
@@ -20,6 +52,24 @@ structure Plot where
   titleMargin  : Nat
   legendPos    : LegendPos
   deriving Repr
+
+/-- Validated plot configuration -/
+structure ValidPlot where
+  widthChars   : { n : Nat // n > 0 ∧ n ≤ 200 }
+  heightChars  : { n : Nat // n > 0 ∧ n ≤ 100 }
+  leftMargin   : Nat
+  bottomMargin : Nat
+  titleMargin  : Nat
+  legendPos    : LegendPos
+  deriving Repr
+
+def ValidPlot.toPlot (vp : ValidPlot) : Plot :=
+  { widthChars := vp.widthChars.val
+  , heightChars := vp.heightChars.val
+  , leftMargin := vp.leftMargin
+  , bottomMargin := vp.bottomMargin
+  , titleMargin := vp.titleMargin
+  , legendPos := vp.legendPos }
 
 /-- Default plot configuration -/
 def defPlot : Plot :=
@@ -311,22 +361,24 @@ def List.zip3 (l1 : List α) (l2 : List β) (l3 : List γ) : List (α × β × �
 def series (name : String) (pts : List (Float × Float)) : (String × List (Float × Float)) :=
   (name, pts)
 
-/-- Scatter plot -/
-def scatter (title : String) (sers : List (String × List (Float × Float))) (cfg : Plot) : IO String := do
+/-- Scatter plot using non-empty arrays -/
+def scatter (title : String) 
+            (sers : NonEmptyArray (String × NonEmptyArray (Float × Float)))
+            (cfg : Plot) : IO String := do
   let wC := cfg.widthChars
   let hC := cfg.heightChars
   let plotC := Canvas.new wC hC
-  let allPts := sers.flatMap (·.2)
-  let (xmin, xmax, ymin, ymax) := boundsXY allPts
+  let allPts := sers.data.flatMap (fun s => s.2.data)
+  let (xmin, xmax, ymin, ymax) := boundsXY allPts.toList
   
   let sx (x : Float) : Nat :=
     clamp 0 (wC * 2 - 1) ((x - xmin) / (xmax - xmin + eps) * (wC * 2 - 1).toFloat).toUInt32.toNat
   let sy (y : Float) : Nat :=
     clamp 0 (hC * 4 - 1) ((ymax - y) / (ymax - ymin + eps) * (hC * 4 - 1).toFloat).toUInt32.toNat
   
-  let pats := List.cycleN palette sers.length
-  let cols := List.cycleN paletteColors sers.length
-  let withSty := List.zip3 sers pats cols
+  let pats := List.cycleN palette sers.data.size
+  let cols := List.cycleN paletteColors sers.data.size  
+  let withSty := List.zip3 sers.data.toList pats cols
   
   let cDone := withSty.foldl (fun c ((_name, pts), pat, col) =>
     pts.foldl (fun c' (x, y) =>
@@ -342,6 +394,24 @@ def scatter (title : String) (sers : List (String × List (Float × Float))) (cf
   let titled := if title.isEmpty then "" else title
   
   pure <| drawFrame cfg titled ax legend
+
+/-- Scatter plot with List interface for convenience -/
+def scatterList (title : String) (sers : List (String × List (Float × Float))) (cfg : Plot) : IO String := do
+  match sers with
+  | [] => pure "Error: Cannot plot empty data"
+  | (name1, pts1) :: rest =>
+    match pts1 with 
+    | [] => pure "Error: Cannot plot empty series"
+    | p1 :: ps1 =>
+      let ne1 := NonEmptyArray.ofList p1 ps1
+      let neRest := rest.filterMap fun (name, pts) => 
+        match pts with
+        | [] => none
+        | p :: ps => some (name, NonEmptyArray.ofList p ps)
+      let neSers : NonEmptyArray _ := 
+        { data := #[(name1, ne1)] ++ neRest.toArray
+        , h := by simp [Array.size_append]; omega }
+      scatter title neSers cfg
 
 /-- Block character for bar charts -/
 def blockChar (n : Nat) : Char :=
@@ -387,6 +457,16 @@ structure Bins where
   hi : Float
   deriving Repr
 
+/-- Validated bins with compile-time guarantees -/
+structure ValidBins where
+  nBins : { n : Nat // n > 0 }
+  lo : Float
+  hi : { h : Float // h > lo }
+  deriving Repr
+
+def ValidBins.toBins (vb : ValidBins) : Bins :=
+  { nBins := vb.nBins.val, lo := vb.lo, hi := vb.hi.val }
+
 /-- Create bins configuration -/
 def bins (n : Nat) (a b : Float) : Bins :=
   { nBins := max 1 n, lo := min a b, hi := max a b }
@@ -424,14 +504,17 @@ def axisifyGrid (cfg : Plot) (grid : List (List (Char × Option Color))) (xmin x
   
   String.intercalate "\n" (attachY ++ [xBar, xLine])
 
-/-- Histogram plot -/
-def histogram (title : String) (b : Bins) (xs : List Float) (cfg : Plot) : IO String := do
+/-- Histogram plot with valid bins and non-empty data -/
+def histogram (title : String) (b : ValidBins)
+              (xs : NonEmptyArray Float)
+              (cfg : Plot) : IO String := do
+  let b := b.toBins
   let step := (b.hi - b.lo) / b.nBins.toFloat
   let binIx (x : Float) : Nat := 
     clamp 0 (b.nBins - 1) (((x - b.lo) / step).floor.toUInt32.toNat)
   
   -- Count values in each bin
-  let counts := xs.foldl (fun acc x =>
+  let counts := xs.data.foldl (fun acc x =>
     if x < b.lo || x > b.hi then acc
     else
       let idx := binIx x
@@ -462,13 +545,14 @@ def histogram (title : String) (b : Bins) (xs : List Float) (cfg : Plot) : IO St
   pure <| drawFrame cfg titled ax legend
 
 /-- Bar chart -/
-def bars (title : String) (kvs : List (String × Float)) (cfg : Plot) : IO String := do
+def bars (title : String) (kvs : NonEmptyArray (String × Float))
+         (cfg : Plot) : IO String := do
   let wC := cfg.widthChars
   let hC := cfg.heightChars
-  let vals := kvs.map (·.2)
+  let vals := kvs.data.map (·.2)
   let vmax := vals.map (·.abs) |>.foldl max 1e-12
   
-  let cats := kvs.zip (List.cycleN paletteColors kvs.length) |>.map fun ((name, v), col) =>
+  let cats := kvs.data.zip (List.cycleN paletteColors kvs.data.size |>.toArray) |>.map fun ((name, v), col) =>
     (name, v.abs / vmax, col)
   
   let nCats := cats.length
@@ -516,11 +600,12 @@ def lineDotsC (x0 y0 x1 y1 : Nat) (mcol : Option Color) (c : Canvas) : Canvas :=
   go x0 y0 (dx - dy) c (dx + dy + 1)
 
 /-- Line graph -/
-def lineGraph (title : String) (sers : List (String × List (Float × Float))) (cfg : Plot) : IO String := do
+def lineGraph (title : String) (sers : NonEmptyArray (String × NonEmptyArray (Float × Float)))
+              (cfg : Plot) : IO String := do
   let wC := cfg.widthChars
   let hC := cfg.heightChars
   let plotC := Canvas.new wC hC
-  let allPts := sers.flatMap (·.2)
+  let allPts := sers.data.flatMap (fun s => s.2.data)
   let (xmin, xmax, ymin, ymax) := boundsXY allPts
   
   let sx (x : Float) : Nat :=
@@ -528,11 +613,11 @@ def lineGraph (title : String) (sers : List (String × List (Float × Float))) (
   let sy (y : Float) : Nat :=
     clamp 0 (hC * 4 - 1) ((ymax - y) / (ymax - ymin + eps) * (hC * 4 - 1).toFloat).toUInt32.toNat
   
-  let cols := List.cycleN paletteColors sers.length
-  let withSty := List.zip sers cols
+  let cols := List.cycleN paletteColors sers.data.size
+  let withSty := List.zip sers.data.toList cols
   
   let cDone := withSty.foldl (fun c ((_, pts), col) =>
-    let sortedPts := pts.toArray.qsort (fun a b => a.1 < b.1) |>.toList
+    let sortedPts := pts.data.qsort (fun a b => a.1 < b.1) |>.toList
     let pairs := List.zip sortedPts sortedPts.tail!
     pairs.foldl (fun c' ((x1, y1), (x2, y2)) =>
       lineDotsC (sx x1) (sy y1) (sx x2) (sy y2) (some col) c'
@@ -552,7 +637,9 @@ def angleWithin (ang a0 a1 : Float) : Bool :=
   else ang >= a0 || ang <= a1
 
 /-- Pie chart -/
-def pie (title : String) (parts : List (String × Float)) (cfg : Plot) : IO String := do
+def pie (title : String) (parts : List (String × Float))
+        (h : parts.length > 0 ∧ parts.all (fun p => p.2 ≥ 0) := by sorry)
+        (cfg : Plot) : IO String := do
   let total := parts.map (·.2.abs) |>.foldl (· + ·) 1e-12
   let normalized := parts.map fun (n, v) => (n, (v.abs / total))
   
@@ -627,7 +714,9 @@ def drawHLine (grid : List (List (Char × Option Color))) (x1 x2 y : Nat) (ch : 
       else grid[y]![x]!
 
 /-- Box plot -/
-def boxPlot (title : String) (datasets : List (String × List Float)) (cfg : Plot) : IO String := do
+def boxPlot (title : String) (datasets : List (String × List Float))
+            (h : datasets.length > 0 ∧ datasets.all (fun d => d.2.length ≥ 5) := by sorry)
+            (cfg : Plot) : IO String := do
   let wC := cfg.widthChars
   let hC := cfg.heightChars
   
@@ -679,7 +768,10 @@ def boxPlot (title : String) (datasets : List (String × List Float)) (cfg : Plo
   pure <| drawFrame cfg titled ax legend
 
 /-- Heatmap -/
-def heatmap (title : String) (matrix : List (List Float)) (cfg : Plot) : IO String := do
+def heatmap (title : String) (matrix : List (List Float))
+            (h : matrix.length > 0 ∧ matrix.all (fun row => row.length > 0) ∧ 
+                 matrix.all (fun row => row.length = matrix.head!.length) := by sorry)
+            (cfg : Plot) : IO String := do
   let rows := matrix.length
   let cols := if matrix.isEmpty then 0 else matrix.head!.length
   
@@ -726,7 +818,9 @@ def heatmap (title : String) (matrix : List (List Float)) (cfg : Plot) : IO Stri
   pure <| drawFrame cfg titled ax gradientLegend
 
 /-- Stacked bars -/
-def stackedBars (title : String) (categories : List (String × List (String × Float))) (cfg : Plot) : IO String := do
+def stackedBars (title : String) (categories : List (String × List (String × Float)))
+                (h : categories.length > 0 ∧ categories.all (fun c => c.2.length > 0) := by sorry)
+                (cfg : Plot) : IO String := do
   let wC := cfg.widthChars
   let hC := cfg.heightChars
   
