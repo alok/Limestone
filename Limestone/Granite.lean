@@ -54,28 +54,12 @@ inductive LegendPos where
   | legendBottom
   deriving Repr, BEq
 
-/-- Raw plot configuration (for internal use) -/
-structure RawPlot where
-  /-- Width of the plot in characters -/
-  widthChars   : Nat
-  /-- Height of the plot in characters -/
-  heightChars  : Nat
-  /-- Left margin size in characters -/
-  leftMargin   : Nat
-  /-- Bottom margin size in characters -/
-  bottomMargin : Nat
-  /-- Title margin size in characters -/
-  titleMargin  : Nat
-  /-- Position of the legend -/
-  legendPos    : LegendPos
-  deriving Repr
-
 /-- Plot configuration with sensible defaults -/
 structure Plot where
-  /-- Width of the plot (1-200 characters) -/
-  widthChars   : { n : Nat // n > 0 ∧ n ≤ 200 } := ⟨60, by decide⟩
-  /-- Height of the plot (1-100 characters) -/
-  heightChars  : { n : Nat // n > 0 ∧ n ≤ 100 } := ⟨20, by decide⟩
+  /-- Width of the plot in characters -/
+  widthChars   : Nat := 60
+  /-- Height of the plot in characters -/
+  heightChars  : Nat := 20
   /-- Left margin size in characters -/
   leftMargin   : Nat := 6
   /-- Bottom margin size in characters -/
@@ -84,19 +68,19 @@ structure Plot where
   titleMargin  : Nat := 1
   /-- Position of the legend -/
   legendPos    : LegendPos := .legendRight
-  deriving Repr
-
-/-- Convert Plot to RawPlot for internal use -/
-def Plot.toRaw (p : Plot) : RawPlot :=
-  { widthChars := p.widthChars.val
-  , heightChars := p.heightChars.val
-  , leftMargin := p.leftMargin
-  , bottomMargin := p.bottomMargin
-  , titleMargin := p.titleMargin
-  , legendPos := p.legendPos }
+  deriving Repr, BEq
 
 /-- Default plot configuration -/
 def defPlot : Plot := {}
+
+/-- Smart constructor for Plot with validation -/
+def mkPlot (width := 60) (height := 20) (leftMargin := 6) (bottomMargin := 2) (titleMargin := 1) (legendPos := LegendPos.legendRight) : Plot :=
+  { widthChars := max 1 width
+  , heightChars := max 1 height
+  , leftMargin := leftMargin
+  , bottomMargin := bottomMargin  
+  , titleMargin := titleMargin
+  , legendPos := legendPos }
 
 /-- Terminal colors -/
 inductive Color where
@@ -331,13 +315,14 @@ def fmt (v : Float) : String :=
     s!"{v}"
 
 /-- Calculate bounds for XY data -/
-def boundsXY (pts : List (Float × Float)) : (Float × Float × Float × Float) :=
+def boundsXY (pts : Array (Float × Float)) : (Float × Float × Float × Float) :=
+  if pts.isEmpty then (0, 1, 0, 1) else
   let xs := pts.map (·.1)
   let ys := pts.map (·.2)
-  let xmin := xs.foldl min (xs.head?.getD 0)
-  let xmax := xs.foldl max (xs.head?.getD 1)
-  let ymin := ys.foldl min (ys.head?.getD 0)
-  let ymax := ys.foldl max (ys.head?.getD 1)
+  let xmin := xs.foldl min xs[0]!
+  let xmax := xs.foldl max xs[0]!
+  let ymin := ys.foldl min ys[0]!
+  let ymax := ys.foldl max ys[0]!
   let padx := (xmax - xmin) * 0.05 + 1e-9
   let pady := (ymax - ymin) * 0.05 + 1e-9
   (xmin - padx, xmax + padx, ymin - pady, ymax + pady)
@@ -350,7 +335,7 @@ def clamp {α : Type} [LE α] [Min α] [Max α] (low high x : α) : α :=
 def eps : Float := 1e-12
 
 /-- Draw a frame around the plot -/
-def drawFrame (_cfg : RawPlot) (titleStr contentWithAxes legendBlockStr : String) : String :=
+def drawFrame (_cfg : Plot) (titleStr contentWithAxes legendBlockStr : String) : String :=
   let parts := [titleStr, contentWithAxes, legendBlockStr].filter (·.length > 0)
   String.intercalate "\n" parts
 
@@ -365,7 +350,7 @@ def placeLabels (base : String) (offset : Nat) (labels : List (Nat × String)) :
   ) base
 
 /-- Add axes to canvas -/
-def axisify (cfg : RawPlot) (c : Canvas) (xmin xmax ymin ymax : Float) : String :=
+def axisify (cfg : Plot) (c : Canvas) (xmin xmax ymin ymax : Float) : String :=
   let plotW := c.width
   let plotH := c.height
   let left := cfg.leftMargin
@@ -429,18 +414,18 @@ def List.zip3 (l1 : List α) (l2 : List β) (l3 : List γ) : List (α × β × �
   | _, _, _ => []
 
 /-- Data series helper -/
-def series (name : String) (pts : List (Float × Float)) : (String × List (Float × Float)) :=
+def series (name : String) (pts : Array (Float × Float)) : (String × Array (Float × Float)) :=
   (name, pts)
 
 /-- Scatter plot using non-empty arrays -/
 def scatter (title : String) 
             (sers : NonEmptyArray (String × NonEmptyArray (Float × Float)))
-            (cfg : RawPlot) : IO String := do
-  let wC := cfg.widthChars
-  let hC := cfg.heightChars
+            (cfg : Plot) : IO String := do
+  let wC := max 1 cfg.widthChars
+  let hC := max 1 cfg.heightChars
   let plotC := Canvas.new wC hC
   let allPts := sers.data.flatMap (fun s => s.2.data)
-  let (xmin, xmax, ymin, ymax) := boundsXY allPts.toList
+  let (xmin, xmax, ymin, ymax) := boundsXY allPts
   
   let sx (x : Float) : Nat :=
     clamp 0 (wC * 2 - 1) ((x - xmin) / (xmax - xmin + eps) * (wC * 2 - 1).toFloat).toUInt32.toNat
@@ -466,23 +451,22 @@ def scatter (title : String)
   
   pure <| drawFrame cfg titled ax legend
 
-/-- Scatter plot with List interface for convenience -/
-def scatterList (title : String) (sers : List (String × List (Float × Float))) (cfg : RawPlot) : IO String := do
-  match sers with
-  | [] => pure "Error: Cannot plot empty data"
-  | (name1, pts1) :: rest =>
-    match pts1 with 
-    | [] => pure "Error: Cannot plot empty series"
-    | p1 :: ps1 =>
-      let ne1 := NonEmptyArray.ofList p1 ps1
-      let neRest := rest.filterMap fun (name, pts) => 
-        match pts with
-        | [] => none
-        | p :: ps => some (name, NonEmptyArray.ofList p ps)
-      let neSers : NonEmptyArray _ := 
-        { data := #[(name1, ne1)] ++ neRest.toArray
-        , h := by simp }
-      scatter title neSers cfg
+/-- Scatter plot with Array interface for convenience -/
+def scatterArray (title : String) (sers : Array (String × Array (Float × Float))) (cfg : Plot) : IO String := do
+  if sers.isEmpty then 
+    pure "Error: Cannot plot empty data"
+  else if sers.any (fun (_, pts) => pts.isEmpty) then
+    pure "Error: Cannot plot empty series"
+  else
+    -- Convert to NonEmptyArray for internal use
+    let neSers := sers.filterMap fun (name, pts) => 
+      if h : pts.size > 0 then
+        some (name, { data := pts, h := h : NonEmptyArray _ })
+      else none
+    if h : neSers.size > 0 then
+      scatter title { data := neSers, h := h } cfg
+    else
+      pure "Error: No valid data series"
 
 /-- Block character for bar charts -/
 def blockChar (n : Nat) : Char :=
@@ -521,36 +505,24 @@ def resampleToWidth (w : Nat) (xs : List Float) : List Float :=
       (List.zip xs (List.range xs.length)).flatMap fun (v, i) =>
         List.replicate (base + if i < extra then 1 else 0) v
 
-/-- Raw bins configuration (for internal use) -/
-structure RawBins where
-  /-- Number of bins for histogram -/
-  nBins : Nat
-  /-- Lower bound of the range -/
-  lo : Float
-  /-- Upper bound of the range -/
-  hi : Float
-  deriving Repr
-
-/-- Bins configuration with sensible defaults -/
+/-- Bins configuration for histograms -/
 structure Bins where
-  /-- Number of bins (must be positive) -/
-  nBins : { n : Nat // n > 0 } := ⟨10, by decide⟩
+  /-- Number of bins -/
+  nBins : Nat := 10
   /-- Lower bound of the range -/
   lo : Float := 0.0
   /-- Upper bound of the range -/
   hi : Float := 1.0
-  deriving Repr
+  deriving Repr, BEq
 
-/-- Convert Bins to RawBins for internal use -/
-def Bins.toRaw (b : Bins) : RawBins :=
-  { nBins := b.nBins.val, lo := b.lo, hi := b.hi }
-
-/-- Create raw bins configuration -/
-def rawBins (n : Nat) (a b : Float) : RawBins :=
-  { nBins := max 1 n, lo := min a b, hi := max a b }
+/-- Smart constructor for Bins that ensures valid values -/
+def mkBins (n := 10) (lo := 0.0) (hi := 1.0) : Bins :=
+  { nBins := max 1 n
+  , lo := min lo hi
+  , hi := max lo hi }
 
 /-- Add axes to grid-based chart -/
-def axisifyGrid (cfg : RawPlot) (grid : List (List (Char × Option Color))) (xmin xmax ymin ymax : Float) : String :=
+def axisifyGrid (cfg : Plot) (grid : List (List (Char × Option Color))) (xmin xmax ymin ymax : Float) : String :=
   let plotH := grid.length
   let plotW := if grid.isEmpty then 0 else grid.head!.length
   let left := cfg.leftMargin
@@ -585,11 +557,11 @@ def axisifyGrid (cfg : RawPlot) (grid : List (List (Char × Option Color))) (xmi
 /-- Histogram plot with valid bins and non-empty data -/
 def histogram (title : String) (b : Bins)
               (xs : NonEmptyArray Float)
-              (cfg : RawPlot) : IO String := do
-  let b := b.toRaw
-  let step := (b.hi - b.lo) / b.nBins.toFloat
+              (cfg : Plot) : IO String := do
+  let nBins := max 1 b.nBins
+  let step := (b.hi - b.lo) / nBins.toFloat
   let binIx (x : Float) : Nat := 
-    clamp 0 (b.nBins - 1) (((x - b.lo) / step).floor.toUInt32.toNat)
+    clamp 0 (nBins - 1) (((x - b.lo) / step).floor.toUInt32.toNat)
   
   -- Count values in each bin
   let counts := xs.data.foldl (fun acc x =>
@@ -597,13 +569,13 @@ def histogram (title : String) (b : Bins)
     else
       let idx := binIx x
       acc.set idx ((acc[idx]!) + 1)
-  ) (List.replicate b.nBins 0)
+  ) (List.replicate nBins 0)
   
   let maxC := (counts.foldl max 1).toFloat
   let fracs := counts.map (·.toFloat / maxC)
   
-  let wData := cfg.widthChars
-  let hC := cfg.heightChars
+  let wData := max 1 cfg.widthChars
+  let hC := max 1 cfg.heightChars
   let colsF := resampleToWidth wData fracs
   
   let dataCols := colsF.map fun f =>
@@ -624,9 +596,9 @@ def histogram (title : String) (b : Bins)
 
 /-- Bar chart -/
 def bars (title : String) (kvs : NonEmptyArray (String × Float))
-         (cfg : RawPlot) : IO String := do
-  let wC := cfg.widthChars
-  let hC := cfg.heightChars
+         (cfg : Plot) : IO String := do
+  let wC := max 1 cfg.widthChars
+  let hC := max 1 cfg.heightChars
   let vals := kvs.data.map (·.2)
   let vmax := vals.map (·.abs) |>.foldl max 1e-12
   
@@ -679,12 +651,12 @@ def lineDotsC (x0 y0 x1 y1 : Nat) (mcol : Option Color) (c : Canvas) : Canvas :=
 
 /-- Line graph -/
 def lineGraph (title : String) (sers : NonEmptyArray (String × NonEmptyArray (Float × Float)))
-              (cfg : RawPlot) : IO String := do
-  let wC := cfg.widthChars
-  let hC := cfg.heightChars
+              (cfg : Plot) : IO String := do
+  let wC := max 1 cfg.widthChars
+  let hC := max 1 cfg.heightChars
   let plotC := Canvas.new wC hC
   let allPts := sers.data.flatMap (fun s => s.2.data)
-  let (xmin, xmax, ymin, ymax) := boundsXY allPts.toList
+  let (xmin, xmax, ymin, ymax) := boundsXY allPts
   
   let sx (x : Float) : Nat :=
     clamp 0 (wC * 2 - 1) ((x - xmin) / (xmax - xmin + eps) * (wC * 2 - 1).toFloat).toUInt32.toNat
@@ -716,12 +688,12 @@ def angleWithin (ang a0 a1 : Float) : Bool :=
 
 /-- Pie chart -/
 def pie (title : String) (parts : NonEmptyArray (String × Float))
-        (cfg : RawPlot) : IO String := do
+        (cfg : Plot) : IO String := do
   let total := parts.data.map (·.2.abs) |>.foldl (· + ·) 1e-12
   let normalized := parts.data.map fun (n, v) => (n, (v.abs / total))
   
-  let wC := cfg.widthChars
-  let hC := cfg.heightChars
+  let wC := max 1 cfg.widthChars
+  let hC := max 1 cfg.heightChars
   let plotC := Canvas.new wC hC
   let wDots := wC * 2
   let hDots := hC * 4
@@ -792,9 +764,9 @@ def drawHLine (grid : List (List (Char × Option Color))) (x1 x2 y : Nat) (ch : 
 
 /-- Box plot -/
 def boxPlot (title : String) (datasets : NonEmptyArray (String × NonEmptyArray Float))
-            (cfg : RawPlot) : IO String := do
-  let wC := cfg.widthChars
-  let hC := cfg.heightChars
+            (cfg : Plot) : IO String := do
+  let wC := max 1 cfg.widthChars
+  let hC := max 1 cfg.heightChars
   
   let stats := datasets.data.map fun (name, vals) => (name, quartiles vals.data.toList)
   
@@ -845,7 +817,7 @@ def boxPlot (title : String) (datasets : NonEmptyArray (String × NonEmptyArray 
 
 /-- Heatmap -/
 def heatmap (title : String) (matrix : NonEmptyArray (NonEmptyArray Float))
-            (cfg : RawPlot) : IO String := do
+            (cfg : Plot) : IO String := do
   let rows := matrix.data.size
   let cols := matrix.data[0]!.data.size
   
@@ -865,8 +837,8 @@ def heatmap (title : String) (matrix : NonEmptyArray (NonEmptyArray Float))
       ((norm * (intensityColors.length - 1).toFloat).floor.toUInt32.toNat)
     intensityColors[idx]?.getD Color.blue
   
-  let wC := cfg.widthChars
-  let hC := cfg.heightChars
+  let wC := max 1 cfg.widthChars
+  let hC := max 1 cfg.heightChars
   
   -- Resample matrix to fit display
   let resampleMatrix := List.range hC |>.map fun i =>
@@ -893,9 +865,9 @@ def heatmap (title : String) (matrix : NonEmptyArray (NonEmptyArray Float))
 
 /-- Stacked bars -/
 def stackedBars (title : String) (categories : NonEmptyArray (String × NonEmptyArray (String × Float)))
-                (cfg : RawPlot) : IO String := do
-  let wC := cfg.widthChars
-  let hC := cfg.heightChars
+                (cfg : Plot) : IO String := do
+  let wC := max 1 cfg.widthChars
+  let hC := max 1 cfg.heightChars
   
   let seriesNames := categories.data[0]!.2.data.map (·.1)
   
@@ -951,94 +923,91 @@ These functions provide a simpler interface for interactive use with sensible de
 section Ergonomic
 
 /-- Quick scatter plot with automatic data conversion -/
-def plot (title : String := "") (data : List (Float × Float)) : IO String := do
-  scatterList title [("", data)] defPlot.toRaw
+def plot (title : String := "") (data : Array (Float × Float)) : IO String := do
+  scatterArray title #[("", data)] defPlot
 
 /-- Quick multi-series scatter plot -/
-def plots (title : String := "") (series : List (String × List (Float × Float))) : IO String := do
-  scatterList title series defPlot.toRaw
+def plots (title : String := "") (series : Array (String × Array (Float × Float))) : IO String := do
+  scatterArray title series defPlot
 
 /-- Quick scatter plot from Y values (X values are indices) -/
-def plotY (title : String := "") (ys : List Float) : IO String := do
+def plotY (title : String := "") (ys : Array Float) : IO String := do
   let data := ys.mapIdx fun i y => (i.toFloat, y)
   plot title data
 
 /-- Quick line plot helper -/
-def line (title : String := "") (data : List (Float × Float)) : IO String := do
-  match data with
-  | [] => pure "Error: Cannot plot empty data"
-  | p :: ps =>
-    let neData := NonEmptyArray.ofList p ps
-    let neSeries := NonEmptyArray.ofList ("", neData) []
-    lineGraph title neSeries defPlot.toRaw
+def line (title : String := "") (data : Array (Float × Float)) : IO String := do
+  if h : data.size > 0 then
+    let neData : NonEmptyArray _ := { data := data, h := h }
+    let neSeries : NonEmptyArray _ := { data := #[("", neData)], h := by simp }
+    lineGraph title neSeries defPlot
+  else
+    pure "Error: Cannot plot empty data"
 
 /-- Quick bar chart from values -/
-def barChart (title : String := "") (labels : List String) (values : List Float) : IO String := do
-  match List.zip labels values with
-  | [] => pure "Error: Cannot create bar chart with empty data"
-  | (l, v) :: rest =>
-    let neData := NonEmptyArray.ofList (l, v) rest
-    bars title neData defPlot.toRaw
+def barChart (title : String := "") (labels : Array String) (values : Array Float) : IO String := do
+  let pairs := labels.zip values
+  if h : pairs.size > 0 then
+    let neData : NonEmptyArray _ := { data := pairs, h := h }
+    bars title neData defPlot
+  else
+    pure "Error: Cannot create bar chart with empty data"
 
-/-- Create Bins easily -/
-def mkBins (n : Nat) (lo hi : Float) : Bins :=
-  { nBins := ⟨max 1 n, Nat.lt_of_lt_of_le Nat.zero_lt_one (Nat.le_max_left 1 n)⟩
-    lo := min lo hi
-    hi := max lo hi }
+/-- Same as mkBins but using the standard bins name from Haskell -/
+def bins (n : Nat) (lo hi : Float) : Bins := mkBins n lo hi
 
 /-- Create Bins with default range [0, 1] -/
 def autoBins (n : Nat := 10) : Bins :=
-  { nBins := ⟨max 1 n, Nat.lt_of_lt_of_le Nat.zero_lt_one (Nat.le_max_left 1 n)⟩
+  { nBins := max 1 n
     lo := 0.0
     hi := 1.0 }
 
 /-- Quick histogram from data -/
-def hist (title : String := "") (data : List Float) (bins : Nat := 10) : IO String := do
-  match data with
-  | [] => pure "Error: Cannot create histogram with empty data"
-  | d :: ds =>
-    let neData := NonEmptyArray.ofList d ds
-    let minVal := neData.foldl min d
-    let maxVal := neData.foldl max d
+def hist (title : String := "") (data : Array Float) (nBins : Nat := 10) : IO String := do
+  if h : data.size > 0 then
+    let neData : NonEmptyArray _ := { data := data, h := h }
+    let minVal := neData.foldl min data[0]!
+    let maxVal := neData.foldl max data[0]!
     let range := maxVal - minVal
     let padding := if range == 0 then 0.5 else range * 0.1
     let vBins : Bins := {
-      nBins := ⟨max 1 bins, Nat.lt_of_lt_of_le Nat.zero_lt_one (Nat.le_max_left 1 bins)⟩
+      nBins := max 1 nBins
       lo := minVal - padding
       hi := maxVal + padding
     }
-    histogram title vBins neData defPlot.toRaw
+    histogram title vBins neData defPlot
+  else
+    pure "Error: Cannot create histogram with empty data"
 
 /-- Quick pie chart -/
-def pieChart (title : String := "") (labels : List String) (values : List Float) : IO String := do
-  match List.zip labels values with
-  | [] => pure "Error: Cannot create pie chart with empty data"
-  | (l, v) :: rest =>
-    let neData := NonEmptyArray.ofList (l, v) rest
-    pie title neData defPlot.toRaw
+def pieChart (title : String := "") (labels : Array String) (values : Array Float) : IO String := do
+  let pairs := labels.zip values
+  if h : pairs.size > 0 then
+    let neData : NonEmptyArray _ := { data := pairs, h := h }
+    pie title neData defPlot
+  else
+    pure "Error: Cannot create pie chart with empty data"
 
 /-- Create a custom plot configuration easily -/
 def plotConfig (width : Nat := 60) (height : Nat := 20) : Plot :=
-  have hw : 0 < min 200 (max 1 width) ∧ min 200 (max 1 width) ≤ 200 := by grind
-  have hh : 0 < min 100 (max 1 height) ∧ min 100 (max 1 height) ≤ 100 := by grind
-  { widthChars := ⟨min 200 (max 1 width), hw⟩
-    heightChars := ⟨min 100 (max 1 height), hh⟩
+  { widthChars := width
+    heightChars := height
     leftMargin := 6
     bottomMargin := 2
     titleMargin := 1
     legendPos := .legendRight }
 
 /-- Simplified data series creation -/
-def data (name : String) (points : List (Float × Float)) : (String × List (Float × Float)) :=
+def data (name : String) (points : Array (Float × Float)) : (String × Array (Float × Float)) :=
   (name, points)
 
 /-- Create points from Y values with automatic X -/
-def fromY (ys : List Float) : List (Float × Float) :=
+def fromY (ys : Array Float) : Array (Float × Float) :=
   ys.mapIdx fun i y => (i.toFloat, y)
 
-/-- Create points from separate X and Y lists -/
-def fromXY (xs : List Float) (ys : List Float) : List (Float × Float) :=
-  List.zip xs ys
+/-- Create points from separate X and Y arrays -/
+def fromXY (xs : Array Float) (ys : Array Float) : Array (Float × Float) :=
+  xs.zip ys
 
 end Ergonomic
 
