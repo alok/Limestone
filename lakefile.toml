@@ -1,0 +1,10 @@
+name = "Limestone"
+version = "0.1.0"
+defaultTargets = ["limestone"]
+
+[[lean_lib]]
+name = "Limestone"
+
+[[lean_exe]]
+name = "limestone"
+root = "Main"
