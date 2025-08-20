@@ -17,9 +17,7 @@ structure NonEmptyArray (α : Type) where
 namespace NonEmptyArray
 
 def ofList {α : Type} (head : α) (tail : List α := []) : NonEmptyArray α :=
-  { data := #[head] ++ tail.toArray, h := by 
-      simp
-      exact Nat.zero_lt_succ _ }
+  { data := #[head] ++ tail.toArray, h := by simp }
 
 instance {α : Type} [Inhabited α] : Inhabited (NonEmptyArray α) :=
   ⟨ofList default []⟩
@@ -413,7 +411,7 @@ def scatterList (title : String) (sers : List (String × List (Float × Float)))
         | p :: ps => some (name, NonEmptyArray.ofList p ps)
       let neSers : NonEmptyArray _ := 
         { data := #[(name1, ne1)] ++ neRest.toArray
-        , h := by simp; exact Nat.zero_lt_succ _ }
+        , h := by simp }
       scatter title neSers cfg
 
 /-- Block character for bar charts -/
@@ -563,7 +561,7 @@ def bars (title : String) (kvs : NonEmptyArray (String × Float))
   let widths := List.range nCats |>.map fun i =>
     base + if i < extra then 1 else 0
   
-  let catGroups := List.zip cats widths |>.map fun ((_, f, col), w) =>
+  let catGroups := List.zip cats.toList widths |>.map fun ((_, f, col), w) =>
     List.replicate w (colGlyphs hC f, some col)
   
   let gutterCol := (String.mk (List.replicate hC ' '), none)
@@ -775,8 +773,8 @@ def heatmap (title : String) (matrix : NonEmptyArray (NonEmptyArray Float))
   let cols := matrix.data[0]!.data.size
   
   let allVals := matrix.data.flatMap (·.data)
-  let vmin := if allVals.isEmpty then 0 else allVals.foldl min allVals[0]!
-  let vmax := if allVals.isEmpty then 1 else allVals.foldl max allVals[0]!
+  let vmin : Float := if allVals.isEmpty then 0 else allVals.foldl min allVals[0]!
+  let vmax : Float := if allVals.isEmpty then 1 else allVals.foldl max allVals[0]!
   let vrange := vmax - vmin + eps
   
   let intensityColors := [
@@ -785,7 +783,7 @@ def heatmap (title : String) (matrix : NonEmptyArray (NonEmptyArray Float))
   ]
   
   let colorForValue (v : Float) : Color :=
-    let norm := clamp 0 1 ((v - vmin) / vrange)
+    let norm := clamp 0.0 1.0 ((v - vmin) / vrange)
     let idx := clamp 0 (intensityColors.length - 1) 
       ((norm * (intensityColors.length - 1).toFloat).floor.toUInt32.toNat)
     intensityColors[idx]?.getD Color.blue
