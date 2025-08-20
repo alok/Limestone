@@ -2,6 +2,13 @@ name = "Limestone"
 version = "0.1.0"
 defaultTargets = ["limestone"]
 
+[leanOptions]
+pp.unicode.fun = true
+autoImplicit = true
+# prevent confusing the AI with missing identifiers misidentified as implicit arguments
+relaxedAutoImplicit = false
+linter.missingDocs = true
+
 [[lean_lib]]
 name = "Limestone"
 

@@ -10,26 +10,34 @@ namespace Limestone.Granite
 
 /-- Non-empty array type to prevent empty data errors -/
 structure NonEmptyArray (α : Type) where
+  /-- The underlying array data -/
   data : Array α
+  /-- Proof that the array is non-empty -/
   h : data.size > 0
   deriving Repr
 
 namespace NonEmptyArray
 
+/-- Create a NonEmptyArray from a head element and optional tail list -/
 def ofList {α : Type} (head : α) (tail : List α := []) : NonEmptyArray α :=
   { data := #[head] ++ tail.toArray, h := by simp }
 
 instance {α : Type} [Inhabited α] : Inhabited (NonEmptyArray α) :=
   ⟨ofList default []⟩
 
+/-- Convert NonEmptyArray to regular Array -/
 def toArray {α : Type} (nea : NonEmptyArray α) : Array α := nea.data
+/-- Convert NonEmptyArray to List -/
 def toList {α : Type} (nea : NonEmptyArray α) : List α := nea.data.toList
 
+/-- Get the size of a NonEmptyArray -/
 def size {α : Type} (nea : NonEmptyArray α) : Nat := nea.data.size
 
+/-- Map a function over a NonEmptyArray, preserving non-emptiness -/
 def map {α β : Type} (f : α → β) (nea : NonEmptyArray α) : NonEmptyArray β :=
   { data := nea.data.map f, h := by simp [Array.size_map]; exact nea.h }
 
+/-- Fold left over a NonEmptyArray -/
 def foldl {α β : Type} (f : β → α → β) (init : β) (nea : NonEmptyArray α) : β :=
   nea.data.foldl f init
 
@@ -40,30 +48,45 @@ abbrev Vector (α : Type) (n : Nat) := { a : Array α // a.size = n }
 
 /-- Position of legend in plots -/
 inductive LegendPos where
+  /-- Position legend to the right of the plot -/
   | legendRight
+  /-- Position legend below the plot -/
   | legendBottom
   deriving Repr, BEq
 
 /-- Plot configuration with validation -/
 structure Plot where
+  /-- Width of the plot in characters -/
   widthChars   : Nat
+  /-- Height of the plot in characters -/
   heightChars  : Nat
+  /-- Left margin size in characters -/
   leftMargin   : Nat
+  /-- Bottom margin size in characters -/
   bottomMargin : Nat
+  /-- Title margin size in characters -/
   titleMargin  : Nat
+  /-- Position of the legend -/
   legendPos    : LegendPos
   deriving Repr
 
 /-- Validated plot configuration -/
 structure ValidPlot where
+  /-- Width of the plot (1-200 characters) -/
   widthChars   : { n : Nat // n > 0 ∧ n ≤ 200 }
+  /-- Height of the plot (1-100 characters) -/
   heightChars  : { n : Nat // n > 0 ∧ n ≤ 100 }
+  /-- Left margin size in characters -/
   leftMargin   : Nat
+  /-- Bottom margin size in characters -/
   bottomMargin : Nat
+  /-- Title margin size in characters -/
   titleMargin  : Nat
+  /-- Position of the legend -/
   legendPos    : LegendPos
   deriving Repr
 
+/-- Convert a ValidPlot to a regular Plot -/
 def ValidPlot.toPlot (vp : ValidPlot) : Plot :=
   { widthChars := vp.widthChars.val
   , heightChars := vp.heightChars.val
@@ -84,9 +107,40 @@ def defPlot : Plot :=
 
 /-- Terminal colors -/
 inductive Color where
-  | default | black | red | green | yellow | blue | magenta | cyan | white
-  | brightBlack | brightRed | brightGreen | brightYellow | brightBlue
-  | brightMagenta | brightCyan | brightWhite
+  /-- Default terminal color -/
+  | default
+  /-- Black color -/
+  | black
+  /-- Red color -/
+  | red
+  /-- Green color -/
+  | green
+  /-- Yellow color -/
+  | yellow
+  /-- Blue color -/
+  | blue
+  /-- Magenta color -/
+  | magenta
+  /-- Cyan color -/
+  | cyan
+  /-- White color -/
+  | white
+  /-- Bright black color -/
+  | brightBlack
+  /-- Bright red color -/
+  | brightRed
+  /-- Bright green color -/
+  | brightGreen
+  /-- Bright yellow color -/
+  | brightYellow
+  /-- Bright blue color -/
+  | brightBlue
+  /-- Bright magenta color -/
+  | brightMagenta
+  /-- Bright cyan color -/
+  | brightCyan
+  /-- Bright white color -/
+  | brightWhite
   deriving Repr, BEq, Inhabited
 
 /-- Convert color to ANSI code -/
@@ -132,7 +186,16 @@ def pieColors : List Color :=
 
 /-- Fill patterns -/
 inductive Pattern where
-  | solid | checker | diagA | diagB | sparse
+  /-- Solid fill pattern -/
+  | solid
+  /-- Checkerboard pattern -/
+  | checker
+  /-- Diagonal pattern A -/
+  | diagA
+  /-- Diagonal pattern B -/
+  | diagB
+  /-- Sparse pattern -/
+  | sparse
   deriving Repr, BEq
 
 /-- Check if pattern has ink at position -/
@@ -149,19 +212,24 @@ def palette : List Pattern :=
 
 /-- 2D array for canvas operations -/
 structure Array2D (α : Type) where
+  /-- Width of the 2D array -/
   width  : Nat
+  /-- Height of the 2D array -/
   height : Nat
+  /-- Flattened data array -/
   data   : Array α
   deriving Repr
 
 namespace Array2D
 
+/-- Get element at position (x, y) in 2D array -/
 def get (a : Array2D α) (x y : Nat) : Option α :=
   if x < a.width && y < a.height then
     a.data[y * a.width + x]?
   else
     none
 
+/-- Set element at position (x, y) in 2D array -/
 def set (a : Array2D α) (x y : Nat) (v : α) : Array2D α :=
   if x < a.width && y < a.height then
     let idx := y * a.width + x
@@ -169,6 +237,7 @@ def set (a : Array2D α) (x y : Nat) (v : α) : Array2D α :=
   else
     a
 
+/-- Create a new 2D array filled with a default value -/
 def new (w h : Nat) (v : α) : Array2D α :=
   { width := w, height := h, data := Array.replicate (w * h) v }
 
@@ -189,14 +258,19 @@ def toBrailleBit (ry rx : Nat) : Nat :=
 
 /-- Canvas for drawing operations -/
 structure Canvas where
+  /-- Width of the canvas in braille cells -/
   width  : Nat
+  /-- Height of the canvas in braille cells -/
   height : Nat
+  /-- Buffer for braille dot patterns -/
   buffer : Array2D Nat
+  /-- Color buffer for each cell -/
   cbuf   : Array2D (Option Color)
   deriving Repr
 
 namespace Canvas
 
+/-- Create a new canvas with specified dimensions -/
 def new (w h : Nat) : Canvas :=
   { width := w
   , height := h
@@ -204,6 +278,7 @@ def new (w h : Nat) : Canvas :=
   , cbuf := Array2D.new w h none
   }
 
+/-- Set a single braille dot at the specified position -/
 def setDot (c : Canvas) (xDot yDot : Nat) (mcol : Option Color) : Canvas :=
   if xDot >= c.width * 2 || yDot >= c.height * 4 then
     c
@@ -221,6 +296,7 @@ def setDot (c : Canvas) (xDot yDot : Nat) (mcol : Option Color) : Canvas :=
         | some col => { c' with cbuf := c.cbuf.set cx cy (some col) }
     | none => c
 
+/-- Fill multiple dots in a rectangular region using a predicate function -/
 def fillDots (x0 y0 x1 y1 : Nat) (p : Nat → Nat → Bool) (mcol : Option Color) (c : Canvas) : Canvas :=
   let xs := List.range (min (x1 + 1) (c.width * 2)) |>.filter (· >= x0)
   let ys := List.range (min (y1 + 1) (c.height * 4)) |>.filter (· >= y0)
@@ -230,6 +306,7 @@ def fillDots (x0 y0 x1 y1 : Nat) (p : Nat → Nat → Bool) (mcol : Option Color
     ) c
   ) c
 
+/-- Render the canvas to a string with braille characters -/
 def render (c : Canvas) : String :=
   let glyph : Nat → Char
     | 0 => ' '
@@ -453,18 +530,25 @@ def resampleToWidth (w : Nat) (xs : List Float) : List Float :=
 
 /-- Bins configuration for histogram -/
 structure Bins where
+  /-- Number of bins for histogram -/
   nBins : Nat
+  /-- Lower bound of the range -/
   lo : Float
+  /-- Upper bound of the range -/
   hi : Float
   deriving Repr
 
 /-- Validated bins with compile-time guarantees -/
 structure ValidBins where
+  /-- Number of bins (must be positive) -/
   nBins : { n : Nat // n > 0 }
+  /-- Lower bound of the range -/
   lo : Float
+  /-- Upper bound (must be greater than lower bound) -/
   hi : { h : Float // h > lo }
   deriving Repr
 
+/-- Convert ValidBins to regular Bins -/
 def ValidBins.toBins (vb : ValidBins) : Bins :=
   { nBins := vb.nBins.val, lo := vb.lo, hi := vb.hi.val }
 

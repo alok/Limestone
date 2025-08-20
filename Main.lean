@@ -2,6 +2,7 @@ import Limestone
 
 open Limestone.Granite
 
+/-- Main entry point demonstrating various chart types from the Limestone library -/
 def main : IO Unit := do
   -- Test scatter plot using List interface
   let data1 := series "Dataset 1" [
