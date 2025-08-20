@@ -343,4 +343,207 @@ def scatter (title : String) (sers : List (String × List (Float × Float))) (cf
   
   pure <| drawFrame cfg titled ax legend
 
+/-- Block character for bar charts -/
+def blockChar (n : Nat) : Char :=
+  match clamp 0 8 n with
+  | 0 => ' ' | 1 => '▁' | 2 => '▂' | 3 => '▃'
+  | 4 => '▄' | 5 => '▅' | 6 => '▆' | 7 => '▇'
+  | _ => '█'
+
+/-- Generate column glyphs for bar height -/
+def colGlyphs (hC : Nat) (frac : Float) : String :=
+  let total := hC * 8
+  let ticks := clamp 0 total ((frac * total.toFloat).toUInt32.toNat)
+  let full := ticks / 8
+  let rem8 := ticks - full * 8
+  let topPad := hC - full - (if rem8 > 0 then 1 else 0)
+  let middle := if rem8 > 0 then [blockChar rem8] else []
+  String.mk (List.replicate topPad ' ' ++ middle ++ List.replicate full '█')
+
+/-- Resample data to specific width -/
+def resampleToWidth (w : Nat) (xs : List Float) : List Float :=
+  if w == 0 then []
+  else if xs.isEmpty then List.replicate w 0
+  else
+    let n := xs.length
+    if n == w then xs
+    else if n > w then
+      -- Average groups when downsampling
+      let groupSize := (n + w - 1) / w
+      List.range w |>.map fun i =>
+        let group := xs.drop (i * groupSize) |>.take groupSize
+        if group.isEmpty then 0 else group.foldl (· + ·) 0 / group.length.toFloat
+    else
+      -- Replicate values when upsampling
+      let base := w / n
+      let extra := w - base * n
+      (List.zip xs (List.range xs.length)).flatMap fun (v, i) =>
+        List.replicate (base + if i < extra then 1 else 0) v
+
+/-- Bins configuration for histogram -/
+structure Bins where
+  nBins : Nat
+  lo : Float
+  hi : Float
+  deriving Repr
+
+/-- Create bins configuration -/
+def bins (n : Nat) (a b : Float) : Bins :=
+  { nBins := max 1 n, lo := min a b, hi := max a b }
+
+/-- Add axes to grid-based chart -/
+def axisifyGrid (cfg : Plot) (grid : List (List (Char × Option Color))) (xmin xmax ymin ymax : Float) : String :=
+  let plotH := grid.length
+  let plotW := if grid.isEmpty then 0 else grid.head!.length
+  let left := cfg.leftMargin
+  let pad := String.mk (List.replicate left ' ')
+  
+  let yTicks := [(0, ymax), (plotH / 2, (ymin + ymax) / 2), (plotH - 1, ymin)]
+  let baseLbl := List.replicate plotH pad
+  
+  let yLabels := yTicks.foldl (fun acc (row, v) =>
+    if row < acc.length then
+      acc.set row (justifyRight left (fmt v))
+    else
+      acc
+  ) baseLbl
+  
+  let renderRow (cells : List (Char × Option Color)) : String :=
+    String.join <| cells.map fun (ch, mc) =>
+      match mc with
+      | none => ch.toString
+      | some c => paint c ch
+  
+  let attachY := List.zip yLabels grid |>.map fun (lbl, cells) =>
+    lbl ++ "│" ++ renderRow cells
+  
+  let xBar := pad ++ "│" ++ String.mk (List.replicate plotW '─')
+  let xLbls := [(0, xmin), (plotW / 2, (xmin + xmax) / 2), (plotW - 1, xmax)]
+  let xLine := placeLabels (String.mk (List.replicate (left + 1 + plotW) ' ')) (left + 1)
+    (xLbls.map fun (x, v) => (x, fmt v))
+  
+  String.intercalate "\n" (attachY ++ [xBar, xLine])
+
+/-- Histogram plot -/
+def histogram (title : String) (b : Bins) (xs : List Float) (cfg : Plot) : IO String := do
+  let step := (b.hi - b.lo) / b.nBins.toFloat
+  let binIx (x : Float) : Nat := 
+    clamp 0 (b.nBins - 1) (((x - b.lo) / step).floor.toUInt32.toNat)
+  
+  -- Count values in each bin
+  let counts := xs.foldl (fun acc x =>
+    if x < b.lo || x > b.hi then acc
+    else
+      let idx := binIx x
+      acc.set idx ((acc[idx]!) + 1)
+  ) (List.replicate b.nBins 0)
+  
+  let maxC := (counts.foldl max 1).toFloat
+  let fracs := counts.map (·.toFloat / maxC)
+  
+  let wData := cfg.widthChars
+  let hC := cfg.heightChars
+  let colsF := resampleToWidth wData fracs
+  
+  let dataCols := colsF.map fun f =>
+    (colGlyphs hC f, some Color.brightCyan)
+  let gutterCol := (String.mk (List.replicate hC ' '), none)
+  let columns := (dataCols.flatMap fun col => [col, gutterCol]).dropLast
+  
+  let grid := List.range hC |>.map fun y =>
+    columns.map fun (str, mc) =>
+      (str.data[y]?.getD ' ', mc)
+  
+  let ax := axisifyGrid cfg grid b.lo b.hi 0 (counts.foldl max 1).toFloat
+  let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
+    [("count", .solid, .brightCyan)]
+  let titled := if title.isEmpty then "" else title
+  
+  pure <| drawFrame cfg titled ax legend
+
+/-- Bar chart -/
+def bars (title : String) (kvs : List (String × Float)) (cfg : Plot) : IO String := do
+  let wC := cfg.widthChars
+  let hC := cfg.heightChars
+  let vals := kvs.map (·.2)
+  let vmax := vals.map (·.abs) |>.foldl max 1e-12
+  
+  let cats := kvs.zip (List.cycleN paletteColors kvs.length) |>.map fun ((name, v), col) =>
+    (name, v.abs / vmax, col)
+  
+  let nCats := cats.length
+  let (base, extra) := if nCats == 0 then (0, 0) else (wC / nCats, wC % nCats)
+  let widths := List.range nCats |>.map fun i =>
+    base + if i < extra then 1 else 0
+  
+  let catGroups := List.zip cats widths |>.map fun ((_, f, col), w) =>
+    List.replicate w (colGlyphs hC f, some col)
+  
+  let gutterCol := (String.mk (List.replicate hC ' '), none)
+  let columns := (catGroups.flatMap fun group =>
+    group ++ [gutterCol]).dropLast
+  
+  let grid := List.range hC |>.map fun y =>
+    columns.map fun (glyphs, mc) =>
+      (glyphs.data[y]?.getD ' ', mc)
+  
+  let ax := axisifyGrid cfg grid 0 (max 1 nCats).toFloat 0 vmax
+  let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
+    (cats.map fun (name, _, col) => (name, .checker, col))
+  let titled := if title.isEmpty then "" else title
+  
+  pure <| drawFrame cfg titled ax legend
+
+/-- Line drawing helper -/
+def lineDotsC (x0 y0 x1 y1 : Nat) (mcol : Option Color) (c : Canvas) : Canvas :=
+  -- Bresenham's line algorithm
+  let dx := if x1 > x0 then x1 - x0 else x0 - x1
+  let sx := if x0 < x1 then 1 else -1
+  let dy := if y1 > y0 then y1 - y0 else y0 - y1
+  let sy := if y0 < y1 then 1 else -1
+  let rec go (x y : Int) (err : Int) (c : Canvas) (fuel : Nat) : Canvas :=
+    match fuel with
+    | 0 => c
+    | fuel' + 1 =>
+      let c' := c.setDot x.natAbs y.natAbs mcol
+      if x == x1 && y == y1 then c'
+      else
+        let e2 := 2 * err
+        let (x', err') := if e2 > -dy then (x + sx, err - dy) else (x, err)
+        let (y', err'') := if e2 < dx then (y + sy, err' + dx) else (y, err')
+        go x' y' err'' c' fuel'
+  termination_by fuel
+  go x0 y0 (dx - dy) c (dx + dy + 1)
+
+/-- Line graph -/
+def lineGraph (title : String) (sers : List (String × List (Float × Float))) (cfg : Plot) : IO String := do
+  let wC := cfg.widthChars
+  let hC := cfg.heightChars
+  let plotC := Canvas.new wC hC
+  let allPts := sers.flatMap (·.2)
+  let (xmin, xmax, ymin, ymax) := boundsXY allPts
+  
+  let sx (x : Float) : Nat :=
+    clamp 0 (wC * 2 - 1) ((x - xmin) / (xmax - xmin + eps) * (wC * 2 - 1).toFloat).toUInt32.toNat
+  let sy (y : Float) : Nat :=
+    clamp 0 (hC * 4 - 1) ((ymax - y) / (ymax - ymin + eps) * (hC * 4 - 1).toFloat).toUInt32.toNat
+  
+  let cols := List.cycleN paletteColors sers.length
+  let withSty := List.zip sers cols
+  
+  let cDone := withSty.foldl (fun c ((_, pts), col) =>
+    let sortedPts := pts.toArray.qsort (fun a b => a.1 < b.1) |>.toList
+    let pairs := List.zip sortedPts sortedPts.tail!
+    pairs.foldl (fun c' ((x1, y1), (x2, y2)) =>
+      lineDotsC (sx x1) (sy y1) (sx x2) (sy y2) (some col) c'
+    ) c
+  ) plotC
+  
+  let ax := axisify cfg cDone xmin xmax ymin ymax
+  let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
+    (withSty.map fun ((n, _), col) => (n, .solid, col))
+  let titled := if title.isEmpty then "" else title
+  
+  pure <| drawFrame cfg titled ax legend
+
 end Limestone.Granite

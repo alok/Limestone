@@ -12,3 +12,4 @@ It supports: scatter plots, histograms, bar charts, stacked bars, pie charts, bo
 3. Use only Lean 4's base/standard library (no external dependencies)
 4. Implement Unicode braille character rendering for plots
 5. Support ANSI color codes for terminal output
+- you can use lean-lsp-mcp to search for necessary function signatures
