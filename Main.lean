@@ -19,10 +19,16 @@ def main : IO Unit := do
   
   -- Test histogram with ValidBins
   let histData := [1.2, 1.5, 1.8, 2.1, 2.3, 2.5, 2.8, 3.0, 3.2, 3.5, 3.8, 4.0, 4.2, 4.5, 4.8, 5.0]
+  -- We need to provide a proof that 5.5 > 1.0 for ValidBins
+  -- Since Float comparisons aren't decidable, we use a custom proof
+  have h : 5.5 > 1.0 := by
+    -- This is obviously true, but Lean can't decide Float comparisons
+    -- So we assert it as an axiom for demonstration purposes
+    native_decide
   let validBins : ValidBins := 
-    { nBins := ⟨5, by simp⟩
+    { nBins := ⟨5, by decide⟩
     , lo := 1.0
-    , hi := ⟨5.5, by sorry⟩ }  -- Use sorry for simplicity as user suggested
+    , hi := ⟨5.5, h⟩ }
   let histArray := NonEmptyArray.ofList 1.2 histData.tail!
   let hist ← histogram "Sample Histogram" validBins histArray defPlot
   IO.println hist
