@@ -73,17 +73,17 @@ structure Plot where
 /-- Validated plot configuration -/
 structure ValidPlot where
   /-- Width of the plot (1-200 characters) -/
-  widthChars   : { n : Nat // n > 0 ∧ n ≤ 200 }
+  widthChars   : { n : Nat // n > 0 ∧ n ≤ 200 } := ⟨60, by decide⟩
   /-- Height of the plot (1-100 characters) -/
-  heightChars  : { n : Nat // n > 0 ∧ n ≤ 100 }
+  heightChars  : { n : Nat // n > 0 ∧ n ≤ 100 } := ⟨20, by decide⟩
   /-- Left margin size in characters -/
-  leftMargin   : Nat
+  leftMargin   : Nat := 6
   /-- Bottom margin size in characters -/
-  bottomMargin : Nat
+  bottomMargin : Nat := 2
   /-- Title margin size in characters -/
-  titleMargin  : Nat
+  titleMargin  : Nat := 1
   /-- Position of the legend -/
-  legendPos    : LegendPos
+  legendPos    : LegendPos := .legendRight
   deriving Repr
 
 /-- Convert a ValidPlot to a regular Plot -/
@@ -541,16 +541,16 @@ structure Bins where
 /-- Validated bins with compile-time guarantees -/
 structure ValidBins where
   /-- Number of bins (must be positive) -/
-  nBins : { n : Nat // n > 0 }
+  nBins : { n : Nat // n > 0 } := ⟨10, by decide⟩
   /-- Lower bound of the range -/
-  lo : Float
-  /-- Upper bound (must be greater than lower bound) -/
-  hi : { h : Float // h > lo }
+  lo : Float := 0.0
+  /-- Upper bound of the range -/
+  hi : Float := 1.0
   deriving Repr
 
 /-- Convert ValidBins to regular Bins -/
 def ValidBins.toBins (vb : ValidBins) : Bins :=
-  { nBins := vb.nBins.val, lo := vb.lo, hi := vb.hi.val }
+  { nBins := vb.nBins.val, lo := vb.lo, hi := vb.hi }
 
 /-- Create bins configuration -/
 def bins (n : Nat) (a b : Float) : Bins :=
@@ -948,5 +948,103 @@ def stackedBars (title : String) (categories : NonEmptyArray (String × NonEmpty
   let titled := if title.isEmpty then "" else title
   
   pure <| drawFrame cfg titled ax legend
+
+/-!
+## Ergonomic API for Interactive Use
+
+These functions provide a simpler interface for interactive use with sensible defaults.
+-/
+
+section Ergonomic
+
+/-- Quick scatter plot with automatic data conversion -/
+def plot (title : String := "") (data : List (Float × Float)) : IO String := do
+  scatterList title [("", data)] defPlot
+
+/-- Quick multi-series scatter plot -/
+def plots (title : String := "") (series : List (String × List (Float × Float))) : IO String := do
+  scatterList title series defPlot
+
+/-- Quick scatter plot from Y values (X values are indices) -/
+def plotY (title : String := "") (ys : List Float) : IO String := do
+  let data := ys.mapIdx fun i y => (i.toFloat, y)
+  plot title data
+
+/-- Quick line plot helper -/
+def line (title : String := "") (data : List (Float × Float)) : IO String := do
+  match data with
+  | [] => pure "Error: Cannot plot empty data"
+  | p :: ps =>
+    let neData := NonEmptyArray.ofList p ps
+    let neSeries := NonEmptyArray.ofList ("", neData) []
+    lineGraph title neSeries defPlot
+
+/-- Quick bar chart from values -/
+def barChart (title : String := "") (labels : List String) (values : List Float) : IO String := do
+  match List.zip labels values with
+  | [] => pure "Error: Cannot create bar chart with empty data"
+  | (l, v) :: rest =>
+    let neData := NonEmptyArray.ofList (l, v) rest
+    bars title neData defPlot
+
+/-- Create ValidBins easily -/
+def mkBins (n : Nat) (lo hi : Float) : ValidBins :=
+  { nBins := ⟨max 1 n, Nat.lt_of_lt_of_le Nat.zero_lt_one (Nat.le_max_left 1 n)⟩
+    lo := min lo hi
+    hi := max lo hi }
+
+/-- Create ValidBins with default range [0, 1] -/
+def autoBins (n : Nat := 10) : ValidBins :=
+  { nBins := ⟨max 1 n, Nat.lt_of_lt_of_le Nat.zero_lt_one (Nat.le_max_left 1 n)⟩
+    lo := 0.0
+    hi := 1.0 }
+
+/-- Quick histogram from data -/
+def hist (title : String := "") (data : List Float) (bins : Nat := 10) : IO String := do
+  match data with
+  | [] => pure "Error: Cannot create histogram with empty data"
+  | d :: ds =>
+    let neData := NonEmptyArray.ofList d ds
+    let minVal := neData.foldl min d
+    let maxVal := neData.foldl max d
+    let range := maxVal - minVal
+    let padding := if range == 0 then 0.5 else range * 0.1
+    let vBins : ValidBins := {
+      nBins := ⟨max 1 bins, Nat.lt_of_lt_of_le Nat.zero_lt_one (Nat.le_max_left 1 bins)⟩
+      lo := minVal - padding
+      hi := maxVal + padding
+    }
+    histogram title vBins neData defPlot
+
+/-- Quick pie chart -/
+def pieChart (title : String := "") (labels : List String) (values : List Float) : IO String := do
+  match List.zip labels values with
+  | [] => pure "Error: Cannot create pie chart with empty data"
+  | (l, v) :: rest =>
+    let neData := NonEmptyArray.ofList (l, v) rest
+    pie title neData defPlot
+
+/-- Create a custom plot configuration easily -/
+def plotConfig (width : Nat := 60) (height : Nat := 20) : Plot :=
+  { widthChars := width
+    heightChars := height
+    leftMargin := 6
+    bottomMargin := 2
+    titleMargin := 1
+    legendPos := .legendRight }
+
+/-- Simplified data series creation -/
+def data (name : String) (points : List (Float × Float)) : (String × List (Float × Float)) :=
+  (name, points)
+
+/-- Create points from Y values with automatic X -/
+def fromY (ys : List Float) : List (Float × Float) :=
+  ys.mapIdx fun i y => (i.toFloat, y)
+
+/-- Create points from separate X and Y lists -/
+def fromXY (xs : List Float) (ys : List Float) : List (Float × Float) :=
+  List.zip xs ys
+
+end Ergonomic
 
 end Limestone.Granite

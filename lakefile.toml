@@ -15,3 +15,7 @@ name = "Limestone"
 [[lean_exe]]
 name = "limestone"
 root = "Main"
+
+[[lean_exe]]
+name = "examples"
+root = "Examples"
