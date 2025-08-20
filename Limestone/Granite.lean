@@ -18,8 +18,11 @@ namespace NonEmptyArray
 
 def ofList {α : Type} (head : α) (tail : List α := []) : NonEmptyArray α :=
   { data := #[head] ++ tail.toArray, h := by 
-      simp [Array.size_append, Array.size_toArray]
-      omega }
+      simp
+      exact Nat.zero_lt_succ _ }
+
+instance {α : Type} [Inhabited α] : Inhabited (NonEmptyArray α) :=
+  ⟨ofList default []⟩
 
 def toArray {α : Type} (nea : NonEmptyArray α) : Array α := nea.data
 def toList {α : Type} (nea : NonEmptyArray α) : List α := nea.data.toList
@@ -410,7 +413,7 @@ def scatterList (title : String) (sers : List (String × List (Float × Float)))
         | p :: ps => some (name, NonEmptyArray.ofList p ps)
       let neSers : NonEmptyArray _ := 
         { data := #[(name1, ne1)] ++ neRest.toArray
-        , h := by simp [Array.size_append]; omega }
+        , h := by simp; exact Nat.zero_lt_succ _ }
       scatter title neSers cfg
 
 /-- Block character for bar charts -/
@@ -555,7 +558,7 @@ def bars (title : String) (kvs : NonEmptyArray (String × Float))
   let cats := kvs.data.zip (List.cycleN paletteColors kvs.data.size |>.toArray) |>.map fun ((name, v), col) =>
     (name, v.abs / vmax, col)
   
-  let nCats := cats.length
+  let nCats := cats.size
   let (base, extra) := if nCats == 0 then (0, 0) else (wC / nCats, wC % nCats)
   let widths := List.range nCats |>.map fun i =>
     base + if i < extra then 1 else 0
@@ -573,7 +576,7 @@ def bars (title : String) (kvs : NonEmptyArray (String × Float))
   
   let ax := axisifyGrid cfg grid 0 (max 1 nCats).toFloat 0 vmax
   let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
-    (cats.map fun (name, _, col) => (name, .checker, col))
+    (cats.toList.map fun (name, _, col) => (name, Pattern.checker, col))
   let titled := if title.isEmpty then "" else title
   
   pure <| drawFrame cfg titled ax legend
@@ -606,7 +609,7 @@ def lineGraph (title : String) (sers : NonEmptyArray (String × NonEmptyArray (F
   let hC := cfg.heightChars
   let plotC := Canvas.new wC hC
   let allPts := sers.data.flatMap (fun s => s.2.data)
-  let (xmin, xmax, ymin, ymax) := boundsXY allPts
+  let (xmin, xmax, ymin, ymax) := boundsXY allPts.toList
   
   let sx (x : Float) : Nat :=
     clamp 0 (wC * 2 - 1) ((x - xmin) / (xmax - xmin + eps) * (wC * 2 - 1).toFloat).toUInt32.toNat
@@ -637,11 +640,10 @@ def angleWithin (ang a0 a1 : Float) : Bool :=
   else ang >= a0 || ang <= a1
 
 /-- Pie chart -/
-def pie (title : String) (parts : List (String × Float))
-        (h : parts.length > 0 ∧ parts.all (fun p => p.2 ≥ 0) := by sorry)
+def pie (title : String) (parts : NonEmptyArray (String × Float))
         (cfg : Plot) : IO String := do
-  let total := parts.map (·.2.abs) |>.foldl (· + ·) 1e-12
-  let normalized := parts.map fun (n, v) => (n, (v.abs / total))
+  let total := parts.data.map (·.2.abs) |>.foldl (· + ·) 1e-12
+  let normalized := parts.data.map fun (n, v) => (n, (v.abs / total))
   
   let wC := cfg.widthChars
   let hC := cfg.heightChars
@@ -657,8 +659,8 @@ def pie (title : String) (parts : List (String × Float))
   let wedges := (normalized.map (·.2) |>.map toAng).foldl (fun acc x => acc ++ [acc.getLast! + x]) [0]
   let angles := List.zip wedges wedges.tail!
   let names := normalized.map (·.1)
-  let cols := List.cycleN pieColors names.length
-  let withP := List.zip3 names angles cols
+  let cols := List.cycleN pieColors names.size
+  let withP := List.zip3 names.toList angles cols
   
   let cDone := withP.foldl (fun c (_, (a0, a1), col) =>
     c.fillDots 0 0 (wDots - 1) (hDots - 1) (fun x y =>
@@ -714,21 +716,20 @@ def drawHLine (grid : List (List (Char × Option Color))) (x1 x2 y : Nat) (ch : 
       else grid[y]![x]!
 
 /-- Box plot -/
-def boxPlot (title : String) (datasets : List (String × List Float))
-            (h : datasets.length > 0 ∧ datasets.all (fun d => d.2.length ≥ 5) := by sorry)
+def boxPlot (title : String) (datasets : NonEmptyArray (String × NonEmptyArray Float))
             (cfg : Plot) : IO String := do
   let wC := cfg.widthChars
   let hC := cfg.heightChars
   
-  let stats := datasets.map fun (name, vals) => (name, quartiles vals)
+  let stats := datasets.data.map fun (name, vals) => (name, quartiles vals.data.toList)
   
-  let allVals := datasets.flatMap (·.2)
-  let ymin := if allVals.isEmpty then 0 else 
-    (allVals.foldl min allVals.head!) - (allVals.foldl max allVals.head!).abs * 0.1
-  let ymax := if allVals.isEmpty then 1 else
-    (allVals.foldl max allVals.head!) + (allVals.foldl max allVals.head!).abs * 0.1
+  let allVals := datasets.data.flatMap (fun d => d.2.data)
+  let ymin := if allVals.isEmpty then 0.0 else 
+    (allVals.foldl min allVals[0]!) - (allVals.foldl max allVals[0]!).abs * 0.1
+  let ymax := if allVals.isEmpty then 1.0 else
+    (allVals.foldl max allVals[0]!) + (allVals.foldl max allVals[0]!).abs * 0.1
   
-  let nBoxes := datasets.length
+  let nBoxes := datasets.data.size
   let boxWidth := if nBoxes == 0 then 1 else max 1 (wC / (nBoxes * 2))
   let spacing := if nBoxes <= 1 then 0 else (wC - boxWidth * nBoxes) / (nBoxes - 1)
   
@@ -737,7 +738,7 @@ def boxPlot (title : String) (datasets : List (String × List Float))
   
   let emptyGrid := List.replicate hC (List.replicate wC (' ', none))
   
-  let finalGrid := (List.zip stats (List.range stats.length)).foldl (fun grid ((_, (minV, q1, median, q3, maxV)), idx) =>
+  let finalGrid := (List.zip stats.toList (List.range stats.size)).foldl (fun grid ((_, (minV, q1, median, q3, maxV)), idx) =>
     let xStart := idx * (boxWidth + spacing)
     let xMid := xStart + boxWidth / 2
     let xEnd := xStart + boxWidth - 1
@@ -761,23 +762,21 @@ def boxPlot (title : String) (datasets : List (String × List Float))
   
   let ax := axisifyGrid cfg finalGrid 0 nBoxes.toFloat ymin ymax
   let legend := legendBlock cfg.legendPos (cfg.leftMargin + cfg.widthChars)
-    ((List.zip stats (List.range stats.length)).map fun ((name, _), i) => 
+    ((List.zip stats.toList (List.range stats.size)).map fun ((name, _), i) => 
       (name, .solid, pieColors[i % pieColors.length]?.getD Color.red))
   let titled := if title.isEmpty then "" else title
   
   pure <| drawFrame cfg titled ax legend
 
 /-- Heatmap -/
-def heatmap (title : String) (matrix : List (List Float))
-            (h : matrix.length > 0 ∧ matrix.all (fun row => row.length > 0) ∧ 
-                 matrix.all (fun row => row.length = matrix.head!.length) := by sorry)
+def heatmap (title : String) (matrix : NonEmptyArray (NonEmptyArray Float))
             (cfg : Plot) : IO String := do
-  let rows := matrix.length
-  let cols := if matrix.isEmpty then 0 else matrix.head!.length
+  let rows := matrix.data.size
+  let cols := matrix.data[0]!.data.size
   
-  let allVals := matrix.flatMap id
-  let vmin := if allVals.isEmpty then 0 else allVals.foldl min allVals.head!
-  let vmax := if allVals.isEmpty then 1 else allVals.foldl max allVals.head!
+  let allVals := matrix.data.flatMap (·.data)
+  let vmin := if allVals.isEmpty then 0 else allVals.foldl min allVals[0]!
+  let vmax := if allVals.isEmpty then 1 else allVals.foldl max allVals[0]!
   let vrange := vmax - vmin + eps
   
   let intensityColors := [
@@ -802,7 +801,7 @@ def heatmap (title : String) (matrix : List (List Float))
       let r0 := clamp 0 (rows - 1) ri.floor.toUInt32.toNat
       let c0 := clamp 0 (cols - 1) ci.floor.toUInt32.toNat
       -- Simple nearest neighbor for now
-      matrix[r0]![c0]!
+      matrix.data[r0]!.data[c0]!
   
   let grid := resampleMatrix.map fun row =>
     row.map fun val => ('█', some (colorForValue val))
@@ -818,30 +817,28 @@ def heatmap (title : String) (matrix : List (List Float))
   pure <| drawFrame cfg titled ax gradientLegend
 
 /-- Stacked bars -/
-def stackedBars (title : String) (categories : List (String × List (String × Float)))
-                (h : categories.length > 0 ∧ categories.all (fun c => c.2.length > 0) := by sorry)
+def stackedBars (title : String) (categories : NonEmptyArray (String × NonEmptyArray (String × Float)))
                 (cfg : Plot) : IO String := do
   let wC := cfg.widthChars
   let hC := cfg.heightChars
   
-  let seriesNames := if categories.isEmpty || categories.head!.2.isEmpty then []
-    else categories.head!.2.map (·.1)
+  let seriesNames := categories.data[0]!.2.data.map (·.1)
   
-  let totals := categories.map fun (_, series) =>
-    series.map (·.2.abs) |>.foldl (· + ·) 0
+  let totals := categories.data.map fun (_, series) =>
+    series.data.map (·.2.abs) |>.foldl (· + ·) 0
   let maxHeight := totals.foldl max 1e-12
   
-  let nCats := categories.length
+  let nCats := categories.data.size
   let (base, extra) := if nCats == 0 then (0, 0)
     else (wC / nCats, wC % nCats)
   let widths := List.range nCats |>.map fun i =>
     base + if i < extra then 1 else 0
   
-  let cols := List.cycleN paletteColors seriesNames.length
-  let seriesColors := List.zip seriesNames cols
+  let cols := List.cycleN paletteColors seriesNames.size
+  let seriesColors := List.zip seriesNames.toList cols
   
-  let makeBar (cat : String × List (String × Float)) (width : Nat) : List (List (Char × Option Color)) :=
-    let series := cat.2
+  let makeBar (cat : String × NonEmptyArray (String × Float)) (width : Nat) : List (List (Char × Option Color)) :=
+    let series := cat.2.data.toList
     let values := series.map (·.2.abs / maxHeight)
     let cumHeights := values.foldl (fun acc x => acc ++ [(acc.getLast?.getD 0) + x]) [0]
     let segments := List.zip3 (series.map (·.1)) cumHeights cumHeights.tail!
@@ -855,7 +852,7 @@ def stackedBars (title : String) (categories : List (String × List (String × F
       ) |>.getD (' ', none)
   
   let gutterCol := List.replicate hC (' ', none)
-  let allBars := List.zip categories widths |>.map (fun (cat, w) => makeBar cat w)
+  let allBars := List.zip categories.data.toList widths |>.map (fun (cat, w) => makeBar cat w)
   let columns := allBars.flatMap fun bar =>
     bar ++ [gutterCol]
   let columns' := if columns.isEmpty then columns else columns.dropLast
